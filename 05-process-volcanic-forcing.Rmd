@@ -1,0 +1,277 @@
+---
+title: "Volcanic forcing processing"
+output: html_notebook
+author: Kira Rehfeld 
+date: 16.11.2017
+---
+
+** PLEASE DO NOT DISTRIBUTE THIS CODE - IT IS UNPUBLISHED **
+
+Get the global mean AOD for the Crowley et al. 2008 Volc aerosol forcing dataset. The data is given in 4 equal-area bands.
+
+**The Crowley data set**
+
+The volcanic forcing is calculated using time series of aerosol optical depth (AOD) at 0.55μm and of the effective radius (Reff) (Crowley et al., 2008). The time resolution of the series is ten days and the data are provided at four equal area latitude bands.
+
+AOD estimates are based on a correlation between sulphate in Antarctic ice cores and satellite data (Sato et al., 1993).
+
+Reff growth and decay is based on satellite observations of the Pinatubo eruption in 1991, with eruptions larger than that of Pinatubo (maximum is 0.15) being scaled by the theoretical calculations for very large eruptions (Pinto et al., 1989). In the model AOD is distributed between 20-86 hPa over three vertical levels, with a maximum at 50 hPa.
+
+Sensitivity experiments for the model response to the Pinatubo eruption yield an average global temperature change (0.4 K) comparable to observations. For the largest eruption of the last millennium, the 1258 AD eruption, a NH summer temperature anomaly over land of 1.2 K is found in agreement with reconstructions (Timmreck et al., 2009)
+
+The dataset is available in a zip file.
+
+Crowley, T. et al. Volcanism and the Little Ice Age. PAGES Newsletter, 16, 22-23 (2008).
+Crowley & Unterman, 2013  www.earth-syst-sci-data.net/5/187/2013/ Earth Syst. Sci. Data, 5, 187–197, 2013
+
+Sato, M., Hansen, J.E., McCormick, M.P. & Pollack, J.B. Stratospheric aerosol optical depths, 1850-1990. J. Geophys. Res., 98(D12), 22,987-22,994, doi:10.1029/93JD02553 (1993).
+        - for most unknown eruptions, a start date of 1 January was used as a default
+        - if an ice core record of a postulated tropical eruption had max sulphate values in year 2, then a mid-year (1 July) start date was inferred, based on obs. of the length of time it took the Pinatubo signal to be detected in polar regions)
+        - the dataset practically extends the Sato et al. (1993) reconstruction
+        - note: Samalas is still 1257 in this reconstruction.
+
+Talk by matt toohey
+- he could be an interesting collaborator for a project and/or for the discussion of the paper
+Check Timmreck 2012 longterm variations and nice figure for volcanic forcing
+"volc forcing is the main driver for PI interannual to decadal temperature variability"
+volcanic forcing 
+NH: solomina 2012
+miller 2012?
+mayewski 1997 so4 in GISP2 <---> is it very different? check the difference/var ratio
+volc activity was 2-6 t stronger than at present during and after the last deglaciation
+
+
+```{r loading packages, message=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(PaleoSpec)
+library(ncdf4)
+library(fields)
+library(maps)
+library(mapdata)
+library(zoo)
+
+source("~/R/IsoVar/IsoVar/functions/volcstrengths.R")
+
+
+```
+
+
+```{r Loading and pre-processing the dataset}
+dataloc<-"~/mydata/CMIP5/Forcing/Crowley2008/"
+
+locs<-c("3090S","030S","030N","3090N")
+fnams<-paste(dataloc,"ICI5_",locs,"_AOD_c.txt",sep="")
+latsects<-c(-90,-30,0,30,90)
+
+
+# read the zonal bands of AOD in and do a straight average. The area is equivalent.
+D<-matrix(NA,ncol=4,nrow=45001)
+for (i in 1:length(fnams)){
+  tmp<-read.table(fnams[i])
+  D[,i]<-tmp[,2]
+}
+
+# time is in the first column
+tAD<-tmp[,1]
+colnames(D)<-locs
+rownames(D)<-tAD
+# D is now a matrix with the AOD for each band, time in rows (36/year)
+  
+plot(tAD,apply(D,1,mean),type="l",main="Crowley 2008 AOD",xlab="year AD",ylab="AOD")
+
+aod<-zoo(apply(D,1,mean),order.by=tAD)
+# construct an annual mean AOD
+annmean.aod<-rollmean(aod,36,align="center")[seq(2,by=36,length(tAD))]
+
+```
+
+
+```{r Look at the Samalas eruption in the Crowley 2008 dataset}
+
+
+plot(aod,xlim=c(1255,1260))
+points(annmean.aod,col="blue")
+abline(h=0.075,col= "red")
+legend("topleft",pch=c(1,NA),lty=c(NA,1),col=c("blue","black"),c("annual aod","aod"))
+title("Samalas eruption 1257/1258")
+
+```
+
+```{r Process volcanic data further}
+volcdata<-list()
+volcdata$aod<-aod
+volcdata$annmean.aod<-annmean.aod
+volcdata$bands<-D
+
+save("volcdata",file="~/R/IsoVar/IsoVar/data/Crowley2008_volcdata.RData")
+
+```
+
+
+
+```{r Find big eruptions}
+thresh<-0.075
+maj.er<-which(annmean.aod>thresh)
+maj.er[c(c(which(diff(maj.er)[-1]>5)))]
+
+ind.rm<-which(diff(maj.er)< 10)+1
+maj.er<-maj.er[-ind.rm]
+
+```
+
+
+
+```{r Get eruptions which are surrounded by years of low volcanic activity}
+
+nyear.after=5
+vo<-volcstrengths(nyear = nyear.after,volcdata=volcdata,thresh.aod=0.075)
+# volc.tropical <-> D[j,2:3] are maximal
+# volc. N/S <-> other ones
+# vo<-volcstrengths(volcdata=volcdata,nyear = 5,thresh.aod = 0.075)
+
+eruptions<-volcdata$annmean.aod[vo$large]
+
+print(eruptions)
+
+# For this analysis I need to limit to 850-1815 max
+eruptions<-window(eruptions,start=850,end=1815)
+
+print(eruptions)
+
+# check that they fulfill the criteria:
+volcdata$annmean.aod[vo$large+1]>0.075
+
+
+```
+
+
+
+
+
+
+```{r Plot the volcanic analysis}
+par(mar=c(4,5,1,1))
+plot(annmean.aod,xlab="year AD",ylab="annual mean global AOD",type="n",xlim=c(800,2000))
+
+abline(h=thresh,col="blue")
+abline(v=index(eruptions),col=adjustcolor("indianred",0.5),lwd=1)
+rect(xleft = 0,xright = 850,ybottom = -5,ytop = 1,col=adjustcolor("blue",0.25),lwd=1)
+rect(xleft = 1815,xright = 2100,ybottom = -5,ytop = 1,col=adjustcolor("blue",0.25),lwd=1)
+
+mtext(side=1,adj=-0.25,font=2,line=3,paste("Non-volc. years after eruptions:",nyear.after))
+lines(annmean.aod)
+
+
+save("eruptions","annmean.aod","maj.er","aod",file=paste(dataloc,"volcaniceruptions.RData",sep=""))
+
+```
+```{r Generate simple time series of effective global radiative forcing}
+# Following Gregory et al. 2016 Clim Dyn -- 1 AOD= -18+-0.1 W/m2
+
+eff_forcing<- -18 
+
+exp_aod<-cbind(index(aod),coredata(aod),coredata(aod)*eff_forcing)
+
+write.csv(exp_aod,file=paste(dataloc,"Crowley_2008_aod_time_series.csv",sep=""))
+
+
+
+
+
+
+```
+
+Test the impact of volcanic frequency on multidecadal temperature variability
+
+Idea: Split the volcanic history into parts and generate a "high volcanic frequency" and a "low volcanic frequency" ensemble of forcing surrogates, that are each as long as the entire time series. 
+```{r Generating surrogates for the volcanic forcing}
+# read new data
+
+Ftab<-read.csv("~/mydata/CMIP5/Forcing/forcing2_gmst.csv",sep=";")
+volc<-Ftab$Volcanic
+yearIn<-Ftab$Year
+##1 Volcanic frequency - split to get the high/low versions
+thresh<-0.005
+lowyears<-yearIn[which(volc<thresh)]
+hist(diff(lowyears))
+
+segpoints<-lowyears[(diff(lowyears)>3)]
+# now find those for which diff(lowyears) is more than 1 year to outline segments
+
+#plot(yearIn,volc,type="l")
+#abline(v=segpoints)
+
+
+#plot(yearIn[1:segpoints[5]],volc[1:segpoints[5]])
+#abline(v=segpoints)
+
+yearIn%in%segpoints # split according to indec
+cumsum(yearIn%in%segpoints)
+SP<-split(Ftab,cumsum(yearIn%in%segpoints))
+
+
+
+volcmax<-(sapply(SP,function(x){max(x$Volcanic)}))
+ranking<-sort(volcmax,index.return=TRUE)$ix
+
+# find cutoff points
+plot(volcmax[ranking])
+abline(v=length(SP)/2)
+
+## Ranked training sets to draw from
+SP.low<-(SP[ranking[1:(length(SP)/2)]])
+SP.high<-(SP[ranking[(length(SP)/2+1):(length(SP))]])
+SP.zero<-sapply(SP,function(x,val){x$Volcanic<-rep(val,length(x$Volcanic))},val=min(Ftab$Volcanic))
+
+length(c(SP,SP.zero))
+
+drawfrom<-function(SP,yearsout,plot=FALSE,repzero=0){
+  # repzero<-number of times SP is added as a zero/novolcanic segment list, i.e. 1/repzero is the fraction of no volcanic eruption segments
+  SP.zero<-sapply(SP,function(x,val){x$Volcanic<-rep(val,length(x$Volcanic))},val=min(Ftab$Volcanic))
+
+  SPmiz<-c(SP,rep(SP.zero,repzero))
+  # change to SPmix below
+  nseg<-length(SP)
+  
+  nyears<-length(do.call(rbind,SP)$Volcanic)
+  #2*yearsout/nyears
+  # find out whether the ratio of yearsout/length training set is appropriate
+  #indices
+  ind<-round(runif(nseg*(2*yearsout/nyears),min=0,max=nseg))
+  #reassemble
+  permuted<-(do.call(rbind,SP[ind]))[1:yearsout,]
+  # now cut to length
+  length(permuted$Volcanic)
+  
+  if (plot) plot(permuted$Volcanic,type="l")
+  return(permuted)
+}
+
+pm<-drawfrom(SP,1000,plot=TRUE)
+pm<-drawfrom(SP.high,1000,plot=TRUE)
+pm<-drawfrom(c(SP.high,SP.zero,SP.zero,SP.zero),1000,plot=TRUE)
+# yearsout<-3000
+# nseg<-length(SP)
+# nyears<-length(do.call(rbind,SP)$Volcanic)
+# #2*yearsout/nyears
+# # find out whether the ratio of yearsout/length training set is appropriate
+# #indices
+# ind<-round(runif(nseg*(2*yearsout/nyears),min=0,max=nseg))
+# #reassemble
+# permuted<-(do.call(rbind,SP[ind]))[1:yearsout,]
+# # now cut to length
+# length(permuted$Volcanic)
+
+plot(permuted$Volcanic,type="l")
+lines(Ftab$Volcanic,col="red")
+
+
+# positive correlation between log max volc and duration of the interval 
+plot(sapply(SP,function(x){log(max(x$Volcanic))}),sapply(SP,function(x){length(x$Volcanic)}))
+
+
+
+
+
+```
+

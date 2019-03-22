@@ -1,0 +1,125 @@
+---
+title: "Hasselmann"
+author: "Kira Rehfeld"
+date: "February 28, 2019"
+output: html_document
+---
+
+
+Langevin equation
+
+x'=-k/gamma*(x(t)-mu(x))+xi(t)
+The Ornstein–Uhlenbeck process is a prototype of a noisy relaxation process. Consider for example a Hookean spring with spring constant k {\displaystyle k} k whose dynamics is highly overdamped with friction coefficient γ {\displaystyle \gamma } \gamma . In the presence of thermal fluctuations with temperature T {\displaystyle T} T, the length x ( t ) {\displaystyle x(t)} x(t) of the spring will fluctuate stochastically around the spring rest length x 0 {\displaystyle x_{0}} x_{0}; its stochastic dynamic is described by an Ornstein–Uhlenbeck process with:
+
+    θ = k / γ , μ = x 0 , σ = 2 k B T / γ , {\displaystyle {\begin{aligned}\theta &=k/\gamma ,\\\mu &=x_{0},\\\sigma &={\sqrt {2k_{B}T/\gamma }},\end{aligned}}} {\begin{aligned}\theta &=k/\gamma ,\\\mu &=x_{0},\\\sigma &={\sqrt {2k_{B}T/\gamma }},\end{aligned}}
+
+where σ {\displaystyle \sigma } \sigma is derived from the Stokes–Einstein equation D = σ 2 / 2 = k B T / γ {\displaystyle D=\sigma ^{2}/2=k_{B}T/\gamma } D=\sigma ^{2}/2=k_{B}T/\gamma for the effective diffusion constant.
+
+In physical sciences, the stochastic differential equation of an Ornstein–Uhlenbeck process is rewritten as a Langevin equation
+
+    x ˙ ( t ) = − k γ ( x ( t ) − x 0 ) + ξ ( t ) {\displaystyle {\dot {x}}(t)=-{\frac {k}{\gamma }}(x(t)-x_{0})+\xi (t)} {\displaystyle {\dot {x}}(t)=-{\frac {k}{\gamma }}(x(t)-x_{0})+\xi (t)}
+
+where ξ ( t ) {\displaystyle \xi (t)} \xi (t) is white Gaussian noise with ⟨ ξ ( t 1 ) ξ ( t 2 ) ⟩ = 2 k B T / γ δ ( t 1 − t 2 ) . {\displaystyle \langle \xi (t_{1})\xi (t_{2})\rangle =2k_{B}T/\gamma \,\delta (t_{1}-t_{2}).} {\displaystyle \langle \xi (t_{1})\xi (t_{2})\rangle =2k_{B}T/\gamma \,\delta (t_{1}-t_{2}).} Fluctuations are correlated as
+
+    ⟨ ( x ( t 0 ) − x 0 ) ( x ( t 0 + t ) − x 0 ) ⟩ = k B T k exp a ( − | t | / τ ) {\displaystyle \langle (x(t_{0})-x_{0})(x(t_{0}+t)-x_{0})\rangle ={\frac {k_{B}T}{k}}\exp(-|t|/\tau )} {\displaystyle \langle (x(t_{0})-x_{0})(x(t_{0}+t)-x_{0})\rangle ={\frac {k_{B}T}{k}}\exp(-|t|/\tau )}
+
+with correlation time τ = γ / k {\displaystyle \tau =\gamma /k} {\displaystyle \tau =\gamma /k}.
+
+At equilibrium, the spring stores an average energy ⟨ E ⟩ = k ⟨ ( x − x 0 ) 2 ⟩ / 2 = k B T / 2 {\displaystyle \langle E\rangle =k\langle (x-x_{0})^{2}\rangle /2=k_{B}T/2} \langle E\rangle =k\langle (x-x_{0})^{2}\rangle /2=k_{B}T/2 in accordance with the equipartition theorem. 
+```{r setup, include=FALSE}
+#rm(list=ls())
+library(deSolve)
+library(zoo)
+library(multitaper)
+library(PaleoSpec)
+library(nest)
+source("ebm_functions.R") 
+source("var_from_spec.R")
+outputdir<-"~/R/spielwiese/ebm0/plots/"
+```
+
+```{r}
+# Simple euler method
+ornstein_uhlenbeck <- function(T,n,nu,lambda,sigma,x0){
+  dw  <- rnorm(n, 0, sqrt(T/n))
+  dt  <- T/n
+  x <- c(x0)
+  for (i in 2:(n+1)) {
+    x[i]  <-  x[i-1] + lambda*(nu-x[i-1])*dt + sigma*dw[i-1]
+  }
+  return(x);
+}
+# Ti = Ti-1+lambda
+
+
+
+```
+```{r}
+rOU <- function(npaths, T, nsteps, x0, theta1, theta2, theta3){
+  dt <- T/nsteps
+  r <- theta1/theta2
+  s <- theta3*sqrt(-expm1(-2*theta2*dt)/2/theta2)
+  e <- exp(-theta2*dt)
+  out <- rbind(x0, matrix(NA_real_, nsteps, npaths))
+  for(i in 2:(nsteps+1)){
+    out[i,] <- rnorm(npaths, r+e*(out[i-1,]-r), s)
+  }
+  out
+}
+
+theta1 <- 1; theta2 <- 2; theta3 <- 3
+ nsteps <- 10
+ sims <- rOU(npaths=500000, T=1, nsteps=nsteps, x0=0,              theta1=theta1, theta2=theta2, theta3=theta3)
+ # check covariance
+ t1 <- 1/2; t2 <- 1
+ cov(sims[1+nsteps*t1,], sims[1+nsteps*t2,]) # estimated
+#[1] 0.713272
+ theta3^2/2/theta2 *(exp(-theta2*(t2-t1)) - exp(-theta2*(t2+t1))) #exact
+#[1] 0.7157078
+```
+
+
+```{r cars}
+ebm.hasselmann-function(time.out,Flux,t.initial=288,interp="constant",plot=FALSE,parms=list(lambda=0.7,S=0)){
+#  attach(parms)
+#  ECS =  Q(2×CO2)/λ
+
+Q_0<-1/4*parms$S
+rho<-1025
+c<-4186
+C<-parms$f*rho*c*parms$h
+
+if (interp=="constant") Frc<-approxfun(x=Flux[,1],y=Flux[,2],method = "constant",rule=2)
+if (interp=="linear") Frc<-approxfun(x=Flux[,1],y=Flux[,2],method = "linear",rule=2)
+
+#params<-c(C=C,alpha=parms$alpha,eps=parms$eps,Q_0=Q_0)
+# ebm1<-function(t,y,parms){
+#   Q<-Frc(t)+Q_0
+#   sigma<-5.67*10^(-8) 
+#   list(1/C*((1-parms$alpha)*Q-sigma*parms$eps*y^4))
+# }
+ebmH<-function(t,y,parms){
+  N<-Frc(t)+Q_0
+  list(1/C*(N-parms$lambda*t))
+}
+
+yout<-ode(y=t.initial,func=ebmH,times=time.out,parms=parms)
+if (plot) {plot(yout[,1],yout[,2])
+  grid()
+}
+forcing.ts<-sapply(time.out,Frc)
+rout<-list(yout=yout,forcing=forcing.ts)
+return(rout)
+}
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

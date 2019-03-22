@@ -1,0 +1,425 @@
+---
+title: "Testing the impact of volcanic eruption frequency on multidecadal temperature variability"
+output: html_notebook
+author: Kira Rehfeld 
+date: 28.02.2019
+---
+
+Reading in CMIP5/CMIP6 forcing data, translate it to effective radiative forcing, run 0D EBM with different combinations of forcing.  
+
+Earths global energy balance can be written as
+C dT/dt= (1-alpha)*Q-sigma*epsilon*T^4
+where C [in units of J/(kg*K)] is the heat capacity of the system, set here to C=1.5*10^9J/(kgK), Q=S/4 is 1/4 of the solar constant, epsilon=0.6 is the emissivity, sigma is the boltzmann-constant and alpha the planetary albedo (0.3). The heat capacity C is that of a 1m^2 surface oceanic box, computed as f*rho*c*h, with f a scaling factor reflecting the oceanic fraction of the planet, rho the density of water, c the specific heat capacity of water and h a depth of the ocean box.
+For a fixed value of Q, the ODE solution describes the system's convergence to an equilibrium state. However, in a simplified experiment, volcanic perturbations can also be considered disturbances in the energy balance, modeled by a radiative forcing anomaly relative to the equilibrium state, Delta F. 
+C dT/dt= (1-alpha)*(Q+Delta F)-sigma*epsilon*T^4
+
+We obtain Delta F (all=CO2+solar+volcanic, volcanic) from the forcing reconstructions (REF? RAPHI?), translating AOD values to effective radiative forcing to W/m^2 (-25W/m^2 per 1 unit AOD), ref: AR5/AR6.
+
+The EBM response under full/volcanic only forcing shows consistent multi-decadal variability between the two forcing scenarios (FIG ebm_results_volc_all_forcingH.pdf)
+
+To further test the influence of volcanic forcing on multidecadal GMT variability, a stochastic volcanic forcing experiment is performed. For this, the 2000-year-long volcanic history is split in 133 segments which start from a near-zero volcanic background flux before an eruption, and which contain an event, as well as the subsequent decay to a background flux (-0.115W/m^2). For volcanic surrogates, we randomly draw from these 133 volcanic epochs to construct 2000-year long forcing histories.
+The EBM is run for 1000 randomized forcing histories. A considerable proportion of the resulting GMT variability is contained in the multidecadal frequency band (red dot at x=0 in Fig. multidec_ratio_volcforcing_h500_nmc_1000_28022019.pdf and inset). Now, keeping the overall forcing variability fixed to (var(Delta F)=0.6W/m^2+0.01), we decrease the recurrence time for volcanic eruptions by mixing in non-volcanic background epochs, adding Gaussian distributed noise over the whole time period (Fig. multidec... inset b) such that with fewer eruptions white noise becomes stronger. We then evaluate the ratio of multidecadal (30-200a) variance to total variance using power spectra (c.f. Rehfeld et al. 2018). 
+We find that with the increase of the recurrence time of volcanic events the relative proportion of variance in the multidecadal to centennial band decreases.
+
+
+
+
+```{r Packages and Functions, message=FALSE, warning=FALSE, paged.print=TRUE}
+#rm(list=ls())
+library(deSolve)
+library(zoo)
+library(multitaper)
+library(PaleoSpec)
+library(nest)
+library(parallel)
+source("ebm_functions.R") 
+source("var_from_spec.R")
+outputdir<-"~/R/spielwiese/ebm0/plots/"
+```
+
+
+```{r Read Forcing Data}
+Ftab<-read.csv("~/mydata/CMIP5/Forcing/forcing2_gmst.csv",sep=";")
+yearIn<-Ftab$Year
+## REFERENCE? for the forcing data
+
+D<-list()
+D[[1]]<-xlsx::read.xlsx("~/mydata/CMIP5/Forcing/IPCC_AR6_volcanic_SAOD_RF.xls",1)
+D[[2]]<-xlsx::read.xlsx("~/mydata/CMIP5/Forcing/IPCC_AR6_volcanic_SAOD_RF.xls",2)
+```
+
+
+
+```{r Effective radiative forcing from AOD/CO2}
+
+# define reference period
+# ind.ref<-which((Ftab$Year>1800)&(Ftab$Year<1900))
+# FRef<-apply(Ftab[ind.ref,],2,mean)
+FRef<-apply(Ftab,2,mean)
+
+dRCO2<-5.35*log(Ftab$CO2/285) #Myhre et al.
+dRTSI<-Ftab$Solar-1365 # unclear reference - Steinhilber?
+dRVolc<-Ftab$Volcanic*(-25)  # evolv2k, get forcing by multiplication with calibration factor:
+# Following Gregory et al. 2016 Clim Dyn -- 1 AOD= -18+-0.1 W/m2
+# 1 AOD = -23 1/m2  Andersson et al. : https://dx.doi.org/10.1038\%2Fncomms8692
+# -25*SAOD (IPCC AR5)
+
+RF<-as.data.frame(cbind(Ftab$Year,dRCO2,dRVolc,dRTSI))
+colnames(RF)<-c("Year","dR_CO2","dR_Volc","dR_TSI")
+
+matplot(RF$Year,RF[,2:4],type="n",ylim=c(-10,2),xlab="year CE", ylab="relative radiative forcing [W/m^2]")
+matlines(RF$Year,RF$dR_CO2,col="brown")
+matlines(RF$Year,RF$dR_Volc,col="black")
+matlines(RF$Year,RF$dR_TSI,col="orange")
+matlines(RF$Year,RF$dR_CO2+RF$dR_Volc+RF$dR_TSI,col="red",lwd=2)
+legend("bottomleft",c("CO2","Volcanic","Solar","Total"),col=c("brown","black","orange","red"),lty=rep(1,4),lwd=c(rep(1,3),2))
+```
+
+
+
+
+
+```{r All forcings, warning=FALSE}
+rout<-getebm.0d(seq(-500,2000),Flux=cbind(RF$Year,RF$dR_Volc+RF$dR_TSI+RF$dR_CO2))
+plot(rout$tsout,xlab="CE",ylab="GMT [C]")
+```
+```{r Run the EBM with different combinations of solar, warning=FALSE}
+
+rout<-getebm.0d(seq(-500,2000),Flux=cbind(RF$Year,RF$dR_TSI+RF$dR_CO2))
+plot(rout$tsout,xlab="CE",ylab="GMT [C]")
+
+# rout<-getebm.0d(seq(-500,2000),Flux=cbind(RF$Year,RF$dR_CO2),plot=FALSE)
+# plot(rout$tsout,xlab="CE",ylab="GMT [C]")
+# rout<-getebm.0d(seq(-500,2000),Flux=cbind(RF$Year,RF$dR_TSI),plot=FALSE)
+# plot(rout$tsout,xlab="CE",ylab="GMT [C]")
+# rout<-getebm.0d(seq(-500,2000),Flux=cbind(RF$Year,RF$dR_Volc),plot=FALSE)
+# plot(rout$tsout,xlab="CE",ylab="GMT [C]")
+# rout<-getebm.0d(seq(-500,2000),Flux=cbind(RF$Year,RF$dR_Volc+RF$dR_TSI),plot=FALSE)
+# plot(rout$tsout,xlab="CE",ylab="GMT [C]")
+
+# as we are interested in the multidecadal timescale, adjust the heat capacity of the EBM by modifying the mid-layer depth of the ocean
+heatcap.inv(tau=30)$h # effective water column depth
+parms<-list(f=0.7,h=300,S=1365,eps=0.6,alpha=0.3)
+
+rout_volc<-getebm.0d(Flux=cbind(RF$Year,RF$dR_Volc),seq(-500,2000),interp="linear",parms=parms,plot=FALSE)
+plot(rout_volc$tsout,xlab="CE",ylab="GMT")
+
+rout_all<-getebm.0d(Flux=cbind(RF$Year,RF$dR_Volc+RF$dR_TSI+RF$dR_CO2),seq(-500,2000),interp="linear",parms=parms,plot=FALSE)
+
+
+rout_novolc<-getebm.0d(Flux=cbind(RF$Year,RF$dR_TSI+RF$dR_CO2),seq(-500,2000),interp="linear",parms=parms,plot=FALSE)
+
+rout_solar<-getebm.0d(Flux=cbind(RF$Year,RF$dR_TSI),seq(-500,2000),interp="linear",parms=parms,plot=FALSE)
+
+rout_co2<-getebm.0d(Flux=cbind(RF$Year,RF$dR_CO2),seq(-500,2000),interp="linear",parms=parms,plot=FALSE)
+```
+```{r}
+
+pdf(file=paste(outputdir, "ebm_results_volc_vs_all_forcing",parms$h,".pdf",sep=""),width=6,height=4)
+par(mar=c(3,3,1,1),cex=1.15,lwd=2)
+ylimy<-range(window(rout_all$tsout,start=0,end=1850))
+plot(rout_all$tsout,xlab="CE",ylab="GMT [C]",axes=FALSE,xlim=c(0,1850),type="n",ylim=ylimy)
+#axis(1,at=seq(0,1850,by=100))
+#axis(2)
+
+axis(1,at=axTicks(1),labels=FALSE)
+mtext(side=1,at=axTicks(1),text=axTicks(1),line=0.5)
+axis(2,at=axTicks(2),labels=FALSE)
+mtext(side=2,at=axTicks(2),text=axTicks(2),line=0.5)
+mtext(side=1,font=2,line=1.5,"year CE")
+mtext(side=2,font=2,line=1.5,"GMT")
+lines(rout_all$tsout,col="black")
+#lines(rout_novolc$tsout,col="blue")
+#lines(rout_solar$tsout,col="orange")
+#lines(rout_co2$tsout,col="red")
+lines(rout_volc$tsout,col="blue")
+grid()
+box()
+legend("bottomleft",text.col=c("black","blue"),c("all","volcanic only"),bty="n")
+
+dev.off()
+
+save("rout_all","rout_volc","parms","rout_solar","rout_co2","rout_novolc",file=paste(outputdir,"ebm_results_volc_vs_all_forcing",parms$h,".RData",sep=""))
+
+
+
+```
+
+```{r Plot EBM results, warning=FALSE}
+plot(rout_all$tsout,xlab="CE",ylab="GMT [C]",axes=FALSE,xlim=c(0,1850),type="n")
+axis(1,at=seq(0,2000,by=100))
+axis(2)
+lines(rout_all$tsout,col="black")
+lines(rout_novolc$tsout,col="blue")
+lines(rout_solar$tsout,col="orange")
+lines(rout_co2$tsout,col="red")
+grid()
+legend("bottomleft",text.col=c("black","blue","orange","red"),c("all","solar+CO2","solar","CO2"))
+
+```
+
+
+
+############  FURTHER ANALYSIS IDEAS
+Idea: Split the volcanic history into parts and generate a "high volcanic frequency" and a "low volcanic frequency" ensemble of forcing surrogates, that are each as long as the entire time series. 
+```{r Generating surrogates for the volcanic forcing}
+
+
+##1 Volcanic frequency - split to get the high/low versions
+#thresh<-0.005 # for AOD
+#lowyears<-yearIn[which(volc>thresh)] #for AOD
+volc<-RF$dR_Volc
+thresh<- -0.115 # in W/m^2,
+
+
+plot(yearIn,abs(volc),log="y")
+abline(h=abs(thresh),col="red")
+lowyears<-yearIn[which(volc>thresh)] #for AOD
+hist(diff(lowyears))
+
+# find those for which diff(lowyears) is more than 3 years to outline segments for permutation
+segpoints<-lowyears[(diff(lowyears)>3)]
+
+
+plot(yearIn[1:segpoints[5]],volc[1:segpoints[5]])
+abline(v=segpoints)
+
+#cumsum(yearIn%in%segpoints) # neat trick to split segments!
+SP<-split(RF,cumsum(yearIn%in%segpoints)) # list of data frames with forcing
+
+
+# get the maximum volcanic forcing (max for AOD, min for rel rad. Forcing)
+volcmax<-(sapply(SP,function(x){min(x[['dR_Volc']])}))
+volcfreq<-(sapply(SP,function(x){length(x[['dR_Volc']])}))
+ranking<-sort(volcmax,index.return=TRUE,decreasing=TRUE)$ix # decreasing for AOD
+ranking.f<-sort(volcfreq,index.return=TRUE,decreasing=TRUE)$ix # decreasing for AOD
+# find cutoff point to split high/low magnitude eruptions
+plot(volcmax[ranking],xlab="ranked segment",ylab="max. rad. forcing W/m^2")
+points(volcmax[ranking.f],col="blue")
+plot(ranking,ranking.f)
+abline(v=length(SP)/2)
+# weak positive correlation between log max volc and duration of the interval 
+plot(sapply(SP,function(x){log(abs(min(x$dR_Volc)))}),sapply(SP,function(x){length(x$dR_Volc)}))
+
+## Ranked training sets to draw from - construct a high and a low magnitude version
+SP.low<-(SP[ranking[1:(length(SP)/2)]])
+SP.high<-(SP[ranking[(length(SP)/2+1):(length(SP))]])
+
+```
+
+
+
+```{r Construct randomized forcing as Alternative - Example}
+pm<-drawfrom(SP,2000,plot=FALSE)
+pm2<-drawfrom(SP.low,2000,plot=TRUE,repzero = 1)
+pm3<-drawfrom(SP,2000,plot=TRUE,repzero=10,fixvarout = TRUE,targetvarout = var(RF$dR_Volc)+0.01)
+pm3<-drawfrom(SP = SP,2000,plot=TRUE,repzero=1,fixvarout = TRUE,targetvarout = 0.8)
+# dQ<-rnorm(n = length(RF$dR_Volc),sd = sqrt(1-var(RF$dR_Volc)))
+# > var(RF$dR_Volc+dQ)
+
+plot(pm$dR_Volc,type="l")
+lines(Ftab$dR_Volc,col="red")
+lines(pm2$dR_Volc,col="green")
+lines(pm3$dR_Volc,col="blue")
+
+summary((sapply(SP,function(x){length(x$Year)})))
+
+```
+## get spectra
+```{r Fewer high-magnitude eruptions}
+# use sparse volcanic history pm2
+#parms<-list(f=0.7,h=1000,S=1365,eps=0.6,alpha=0.3)
+rout_few<-getebm.0d(Flux=cbind(pm2$Year,pm2$dR_Volc),seq(-500,2000),interp="linear",parms=parms,plot=FALSE)
+
+volccol<-"black"
+tempcol<-"blue"
+
+plot(rout_few$tsout,xlab="CE",ylab="GMT",col=tempcol,axes=FALSE)
+axis(1)
+axis(2,col=tempcol,col.axis=tempcol)
+par(new=TRUE)
+plot(pm2$Year,pm2$dR_Volc,col="red",type="l",ylim=rev(range(pm2$dR_Volc)),axes=FALSE,xlab="",ylab="")
+axis(4,col.axis="red",col="red")
+mtext(side=4,col="red","Volcanic forcing (W/m^2)",line=1.5)
+```
+
+```{r set up of the experiment, warning=FALSE}
+
+nmc<-1000
+#parms<-list(f=0.7,h=70,S=1365,eps=0.6,alpha=0.3)
+
+FF<-c(seq(0,10,by=1),seq(12,20,by=2),seq(25,50,by=5))
+FF<-c(seq(0,5,by=1),seq(6,18,by=2),c(20,25,30,50))
+# FF<-c(seq(0,20,by=1),c(30,40,50,75,100))
+FR<-rep(NA,length(FF))
+Ftime<-seq(0,2000)
+inttime<-seq(-500,2000)
+tsc.in<-c(30,200)
+
+RES.md<-as.data.frame(matrix(NA,ncol = nmc,nrow = length(FR)));
+colnames(RES.md)<-paste("iter",seq(1,nmc))
+row.names(RES.md)<-FF
+RES.all<-FORC.all<-RES.md
+
+exmpl<-vector(mode="list",length=length(FR))
+
+getresponse<-function(VolcH,Ftime,inttime,parms){
+  tmp<-getebm.0d(Flux=cbind(Ftime,VolcH),inttime,interp="linear",parms=parms,plot=FALSE)
+  out<-coredata(tmp$tsout)
+  rm(tmp)
+  return(out)
+}
+
+
+RV<-vector(mode = "list",length=length(FF))
+
+
+
+
+ensresponse<-function(repzero,SP,inttime,Ftime,targetvarout,nmc=10){
+  res<-list()
+  FMat<-replicate(nmc,drawfrom(SP,max(inttime)+1,plot=FALSE,repzero=repzero,fixvarout = TRUE,targetvarout = targetvarout)$dR_Volc)
+  #LS.f<-apply(FMat,2,function(x,tsc.in){tsc_dep_var(zoo(x,order.by=Ftime),tsc.in)},tsc.in=tsc.in)
+  
+  res$exmpl<-getebm.0d(Flux=cbind(Ftime,FMat[,1]),inttime,interp="linear",parms=parms,plot=FALSE)
+  res$FORC.all<-apply(FMat,2,var)
+  res$RMat<-apply(FMat,2,getresponse,Ftime=Ftime,inttime=inttime,parms=parms)
+  LS<-res$LS<-apply(res$RMat,2,function(x,tsc.in){tsc_dep_var(zoo(x,order.by=Ftime),tsc.in)},tsc.in=tsc.in)
+  #   # tot.var<-sapply(LS,function(x){x$var.tot})
+  res$mdec.var<-sapply(LS,function(x){x$var.tsc})
+  res$tot.var<-(apply(res$RMat,2,var)) # total variance
+  res$RES.md<-res$mdec.var
+  res$RES.all<-res$tot.var
+  
+  return(res)
+}
+```
+
+```{r run the model}
+##
+
+
+# Calculate the number of cores
+no_cores <- detectCores() - 1
+ 
+cl<-makeCluster(no_cores, type="FORK")
+# RV<-lapply(FF,ensresponse,SP,inttime,Ftime,targetvarout=var(RF$dR_Volc)+0.001,nmc=nmc)
+#clusterExport(cl,c("FF","SP","inttime","Ftime", "RF", "nmc"))
+RV<-parLapply(cl, FF,ensresponse,SP,inttime,Ftime,targetvarout=var(RF$dR_Volc)+0.001,nmc=nmc)
+
+stopCluster(cl)
+
+save.image(file=paste(outputdir,"workspace_h",parms$h,"_nmc_",nmc,"_",Sys.Date(),".RData",sep=""))
+```
+
+```{r Postproc}
+
+
+exmpl<-lapply(RV,function(x){x$exmpl})
+RES.md<-sapply(RV,function(x){x$mdec.var})
+RES.all<-sapply(RV,function(x){x$tot.var})
+#FR<-sapply(RV,function(x){x$FR})
+FR<-apply(RES.md,2,mean)/apply(RES.all,2,mean)
+LS<-lapply(RV,function(x){x$LS})
+MD<-sapply(LS,sapply,function(x){x$var.tsc})
+
+```
+
+
+
+```{r}
+
+
+
+meanduration<-ceiling(mean(sapply(SP,function(x){length(x$Year)})))
+
+func<-function(f){p=1/(1+f); return(p)}
+no_of_eruptions<-floor(func(FF)*2000/meanduration)
+
+# N=p*L/l
+# p=(l/L)*N
+i=1
+j=8
+
+
+cis<-varrat_ci(FR,rep(nmc*LS[[1]][[1]]$dof,length(FR)),rep(nmc*LS[[1]][[1]]$dof,length(FR)))
+pdf(file=paste(outputdir, "multidec_ratio_volcforcing_h",parms$h,"_nmc_",nmc,"_",Sys.Date(),".pdf",sep=""),width=8,height=6)
+par(mar=c(3,3,1,1),cex=1.15,lwd=2)
+plot(FF,FR,xlab="",ylab="",ylim=range(cis),pch=20,col="black",bg="black",axes=FALSE,type="n")
+arrows(x0 = FF,x1 = FF,y0=cis[,1],y1=cis[,2],length = 0.01,code = 3,angle=90)
+points(FF,FR,pch=20,col="black",bg="black")
+points(FF[c(i,j)],FR[c(i,j)],pch=20,col="indianred",bg="indianred")
+# what is the average eruption epoch length?
+axis(1,at=axTicks(1),labels=FALSE)
+mtext(side=1,at=axTicks(1),text=floor(func(axTicks(1))*max(inttime)/meanduration),line=0.5)
+
+axis(2,at=axTicks(2),labels=FALSE)
+mtext(side=2,at=axTicks(2),text=axTicks(2),line=0.5)
+mtext(side=1,font=2,line=1.5,"expected number of eruption epochs per 2000a")
+mtext(side=2,font=2,line=1.5,expression(bold(paste(group("",{sigma[30-200]^2}/sigma[tot]^2,"")))))
+legend("bottomleft",paste("N=",nmc),bty="n")
+box()
+
+dev.off()
+
+
+```
+
+
+
+```{r Time series illustrations}
+plot(FF,FR,ylab="var(30-200a)/var(total)",xlab="expected number of zero-eruption epochs")
+plot(FF,apply(RES.md,2,mean),ylab="var(30-200a)",xlab="expected number of zero-eruption epochs")
+plot(FF, apply(RES.all,2,mean),xlab="expected number of zero-eruption epochs",ylab="var(total)")
+
+## plot forcing and response
+
+tsx2<-exmpl[[j]]$tsout
+tsy2<-zoo(exmpl[[j]]$forcing.ts,order.by=index(exmpl[[j]]$tsout))
+
+for (k in c(1:10)){
+  pdf(file=paste(outputdir,"ts__h",parms$h,"_nmc_",nmc,"_",Sys.Date(),"_",k,".pdf",sep=""),width=4,height=2)
+  yax2=FALSE
+  par(mar=c(2.5,3.5,0.1,3.5),cex=1.02,lwd=2,cex.lab=1.02)
+  tsx1<-exmpl[[k]]$tsout
+  tsy1<-zoo(exmpl[[k]]$forcing.ts,order.by=index(exmpl[[k]]$tsout))
+  if (k>6) yax2=seq(-3,0)
+  plotxy(tsx1,tsy1,col1="black",ylimy1=c(-1,0.2))
+  dev.off()
+}
+
+# plotxy(tsx2,tsy2,col1="black")
+# in principle, the variance of the forcing is to a value slightly higher than in the original volcanic forcing, but drawing only one realization for each recurrence strengths, the effective forcing strength varies slightly.
+#plot(sapply(exmpl,function(x){var(x$forcing.ts)}),sapply(exmpl,function(x){var(x$tsout)}))
+
+```
+** TO BE DONE**
+## check that the forcing variance is always the same DONE
+## get the response for a systematic range DONE
+## get quantiles and dual plots for the examples DONE
+## look at the spectra of forcing and response
+## read up on spectral gain
+## plot decadal vs. total variance <----------------------------- DONE
+
+
+
+#boxplot(log10(yonkers), log10(stamford),names = c("Yonkers", "Stamford"),main = "New York Ozone Levels",ylab = "Log10 Ozone Levels (ppb)",notch = TRUE)
+#rout_few<-getebm.0d(Flux=cbind(pm2$Year,VolcH),seq(-500,2000),interp="linear",parms=parms,plot=FALSE)
+```{r}
+library(TeachingDemos)
+d0 <- data.frame(x = rnorm(150, sd=5), y = rnorm(150, sd=5))
+d0_inset <- data.frame(x = rnorm(1500, sd=5), y = rnorm(1500, sd=5))
+plt.annot<-function(x,lab="a"){plot(x,col=2,pch=".",mgp=c(1,0.4,0),
+    xlab='', ylab='', cex.axis=0.5);mtext(side=3,line=-1,lab,adj=0.1,font=2)}
+plot(d0)
+subplot( 
+  plt.annot(d0_inset,"a"), 
+  x=grconvertX(c(0.75,0.99), from='npc'),
+  y=grconvertY(c(0.2,0.55), from='npc'),
+  type='fig', pars=list( mar=c(1.5,1.5,0,0)+0.1))
+subplot( plt.annot(d0_inset,"b"), 
+  x=grconvertX(c(0.75,0.99), from='npc'),
+  y=grconvertY(c(0.6,0.95), from='npc'),
+  type='fig', pars=list( mar=c(1.5,1.5,0,0)+0.1) )
+```
+
