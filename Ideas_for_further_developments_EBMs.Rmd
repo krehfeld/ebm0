@@ -11,8 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## EBMs
 
-+ At present the 0d-EBM does have a fixed albedo. This could be made temperature-sensitive
 + The heat capacity determines the response time/relaxation time of the system --> it should be obtained from data, e.g. from unforced/steady state model runs or from 4xCO2 experiments
 + An extension would be to consider 2-3 boxes in the EBM, with different response times (e.g. Rypdal & Fredriksen)
 + TOA noise level - is this something we can estimate from data?
-+ extend to 1d EBMs (Sellers)
++ extend to 1d EBMs (Sellers-type, should be straightforward with deSolve which can handle up to 3d)

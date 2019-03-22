@@ -1,0 +1,153 @@
+---
+title: Exploring the parameter sensitivity of the zero-dimensional energy balance of the Earth
+author: "Kira Rehfeld"
+date: "23.06.2020"
+output:
+  html_document:
+    toc: true
+---
+
+
+## Overview
+Aim: Explore simple interplay between destabilizing feedback (ice-albedo) and stabilizing feedback (Boltzmann-cooling/thermal radiation) with EBM; produce some illustration plots for climate variability lecture
+
+\tableofcontents
+
+**Reference**  
+ Zaliapin, I. and Ghil, M.: Another look at climate sensitivity, Nonlin. Processes Geophys., 17, 113–122, https://doi.org/10.5194/npg-17-113-2010, 2010. 
+
+## Packages and functions required
+
+```{r Packages and Functions, message=FALSE, warning=FALSE, paged.print=TRUE}
+#rm(list=ls())
+library(deSolve)
+library(zoo)
+library(multitaper)
+library(PaleoSpec)
+library(nest)
+library(parallel)
+source("ebm_functions.R") 
+#source("var_from_spec.R")
+outputdir<-"~/R/spielwiese/ebm0/plots/"
+```
+
+## Setup for the forcing data over the last 2000 years 
+
+```{r Read Forcing Data for last 2000 years}
+#Ftab<-read.csv("~/mydata/Forcing/forcing2_gmst_past2k.csv",sep=",")
+#yearIn<-Ftab$Year
+## REFERENCE for the forcing data: IPCC AR6, Pages2k Consortium, 2019
+#save("Ftab",file = "./data/Ftab.RData")
+data("Ftab")
+
+```
+
+
+
+```{r Effective radiative forcing from AOD/CO2}
+
+
+FRef<-apply(Ftab,2,mean)
+
+dRCO2<-5.35*log(Ftab$CO2/285) #Myhre et al.
+dRTSI<-Ftab$Solar-1365 # unclear reference - Steinhilber?
+dRVolc<-Ftab$Volcanic*(-25)  # evolv2k, get radiative forcing by multiplication of the total AOD with calibration factor, for which different values (Gregory et al., 2016: 1 AOD= -18+-0.1 W/m2; Andersson et al. 1 AOD = -23 1/m2 https://dx.doi.org/10.1038\%2Fncomms8692; IPCC AR5/AR6 1 AOD = 25 W/m^2, so using 25 W/m^2 (Pages2k Consortium, 2019)
+
+RF<-as.data.frame(cbind(Ftab$Year,dRCO2,dRVolc,dRTSI))
+colnames(RF)<-c("Year","dR_CO2","dR_Volc","dR_TSI")
+
+matplot(RF$Year,RF[,2:4],type="n",ylim=c(-10,2),xlab="year CE", ylab="relative radiative forcing [W/m^2]")
+matlines(RF$Year,RF$dR_CO2,col="brown")
+matlines(RF$Year,RF$dR_Volc,col="black")
+matlines(RF$Year,RF$dR_TSI,col="orange")
+matlines(RF$Year,RF$dR_CO2+RF$dR_Volc+RF$dR_TSI,col="red",lwd=2)
+legend("bottomleft",c("CO2","Volcanic","Solar","Total"),col=c("brown","black","orange","red"),lty=rep(1,4),lwd=c(rep(1,3),2))
+```
+
+
+## Test radiative forcings with the simple fixed-albedo EBM
+
+
+```{r All forcings, standard EBM, warning=FALSE}
+rout<-getebm.0d(seq(-500,2000),Flux=cbind(RF$Year,RF$dR_Volc+RF$dR_TSI+RF$dR_CO2))
+plot(rout$tsout,xlab="CE",ylab="GMT [C]")
+```
+```{r Run the EBM with different combinations of solar, warning=FALSE}
+
+rout<-getebm.0d(seq(-500,2000),Flux=cbind(RF$Year,RF$dR_TSI+RF$dR_CO2))
+plot(rout$tsout,xlab="CE",ylab="GMT [C]")
+
+# as we are interested in the multidecadal timescale, adjust the heat capacity of the EBM by modifying the mid-layer depth of the ocean
+heatcap.inv(tau=30)$h # effective water column depth
+parms<-list(f=0.7,h=300,S=1365,eps=0.6,alpha=0.3)
+
+rout_volc<-getebm.0d(Flux=cbind(RF$Year,RF$dR_Volc),seq(-500,2000),interp="linear",parms=parms,plot=FALSE)
+plot(rout_volc$tsout,xlab="CE",ylab="GMT")
+
+```
+
+## Temperature-dependent Albedo: First tests
+Following Zaliapin and Ghil, 2010, and the standard energy balance paradigm, we model the rate of change in global mean temperature $T$ from the inverse heat capacity of a surface ocean layer, multiplied by the difference between the incoming and outgoing solar radiation
+$c\frac{\text{d}T}{\text{d}t}=R_i(T)-R_o(T)$.
+
+In a zero-dimensional version, we write 
+$R_i=\mu Q_0 (1-\alpha(T))$
+and 
+$R_o=\sigma~ g(T)~T^4$.
+
+The ice-albedo feedback can be modeled by setting
+
+$\alpha (T;\kappa)=c_1+c_2\frac{1-tanh(\kappa (T-T_c))}{2}$
+with $\kappa$ controlling the steepness of the albedo transition, and     
+ $T_c=273\text{K}$
+ $c_1=0.15$
+ $c_2=0.85$ (max(albedo)$=c_1+c_2$).
+ More details: Zaliapin and Ghil, 2010.
+ 
+```{r Setting up the temp.-dependent albedo, message=TRUE, warning=FALSE}
+#rout_volc<-getebm.0d.tempdep(Flux=cbind(RF$Year,RF$dR_Volc),seq(-500,2000),interp="linear",parms=list(f=0.7,h=200,S=1365,eps=0.6,alphamax=0.3,kappa=0.05,Tinit=350),plot=TRUE)
+
+rout_volc<-getebm.0d.tempdep(Flux=cbind(RF$Year,rep(0,length(RF$Year))),seq(-500,2000),interp="linear",parms=list(f=0.7,h=200,S=1365,eps=0.6,alphamax=0.3,kappa=0.05,Tinit=350),plot=TRUE)
+
+```
+
+```{r Energy in vs. Energy out}
+# 
+plot(rout_volc$Rin,rout_volc$Rout,xlab=expression('R'['out']*(W/m^2)),ylab=expression('R'['in'] (W/m^2)))
+abline(a = 0, b=1)
+
+
+
+```
+## Testing different ice-albedo feedback steepnesses
+changing $\kappa$ changes the sensitivity of the model from a Budyko-type model ($\kappa >> 1$) to a Sellers-type model.
+
+```{r warning=FALSE}
+Tint<-seq(-500,5000)
+#Flux<-cbind(Tint,rep(0,length(Tint))) #constant
+#Flux<-cbind(Tint,rnorm(length(Tint),mean = 0,sd = 0.1)) #Gaussian
+#Flux<-cbind(Tint,c(rnorm(length(Tint),mean = 0,sd = 100)+seq(0,2000,length.out = length(Tint)))) #Gaussian + Trend leading to 10W/m^2 more
+Flux<-cbind(Tint,c(rnorm(length(Tint),mean = 0,sd = 1)+c(seq(0,2000,length.out = round(length(Tint)/2)),seq(2000,-300,length.out = length(Tint)-round(length(Tint)/2))))) #Gaussian + Trend leading to 10W/m^2 more
+
+
+# We could, as in Zaliapin and Ghil, set the Flux to zero and use $\mu$ to change the incoming solar radiation directly
+mu=1
+parms<-list(f=0.7,h=200,S=1365*mu,eps=0.6,alphamax=0.3,kappa=0.05,Tinit=255)
+rout_volc<-getebm.0d.tempdep(Flux,Tint,interp="linear",parms=parms,plot=TRUE)
+# could look at equilibrium now (plot 5 in Zaliapin and Ghil), by initializing this at sequential intervals from 100 to 400K and inspecting whether a perturbation drives it away or towards the fixed points
+# For kappa = 1 - smooth transition in the response
+
+
+
+
+```
+```{r}
+par(mfcol=c(1,1))
+plot((Flux[-1,2]+parms$S/4)/(parms$S/4),rout_volc$tsout,type="b",pch=23,bg="grey",cex=0.2,xlab=bquote(mu),ylab="GMST [K]")
+points((Flux[1,2]+parms$S/4)/(parms$S/4),rout_volc$tsout[1],col="red")
+#mtext(side=1,line=-1, expression ("Albedo:" * kappa ~"="*3))
+mtext(side=1,line=-1, bquote(kappa == .(parms$kappa)),adj=0.99)
+#text(side=1,line=-2, bquote(kappa == .(parms$kappa)))
+
+```
+
